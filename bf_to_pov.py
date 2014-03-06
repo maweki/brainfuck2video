@@ -1,6 +1,5 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 
-from __future__ import print_function
 import os
 import sys
 import errno
@@ -24,18 +23,6 @@ class bf(object):
 	@staticmethod
 	def clean_text(text):
 		return ''.join(c for c in text if c in bf.bf_commands)
-
-	@staticmethod
-	def from_text(text):
-		return bf(bf.clean_text(text))
-
-	@staticmethod
-	def from_file(fp):
-		code_raw = fp.read()
-		return bf.from_text(code_raw)
-
-	def scene_amb(self):
-		pass
 
 	@staticmethod
 	def get_scene_data(code):
@@ -159,95 +146,59 @@ class bf(object):
 			before = after
 
 	@staticmethod
-	def get_header():
-		scene_amb = '#include "scene_def.pov.inc"\n'
-		scene_amb = scene_amb + '#declare code="'+code+'";\n'
-		scene_amb = scene_amb + '#switch (clock)\n'
+	def get_header(code):
+		scene_amb = '#version 3.7;\n'
+		scene_amb += '#include "scene_def.pov.inc"\n'
+		scene_amb += '#declare code="' + code + '";\n'
+		scene_amb += '#switch (clock)\n'
 		return scene_amb
-
-	def __init__(self, code, maxticks=200):
-		self.code = code
-		self.tick_count, self.scene = bf.get_scene(code, maxticks)
 
 def main():
 	parser = argparse.ArgumentParser(description='Converts brainfuck code to povray scene')
 	parser.add_argument('--fps', metavar='frames_per_second', type=int, default=24)
 	parser.add_argument('--fpt', metavar='frames_per_tick', type=int, default=48)
-	parser.add_argument('--mt', metavar='maxticks', type=int, default=300)
 	parser.add_argument('--width', metavar='width', default='640')
 	parser.add_argument('--height', metavar='height', default='480')
-	parser.add_argument('--bitrate', metavar='bitrate', default='4000K')
 	parser.add_argument('--quiet', action='store_const', const=True)
-	#parser.add_argument('--input', metavar='inputfile', type=argparse.FileType('r'), nargs='?', default=sys.stdin)
 	parser.add_argument('codefile', metavar='codefile', type=argparse.FileType('r'))
-	parser.add_argument('outputfile', metavar='outputfile', type=argparse.FileType('w'))
+	parser.add_argument('outputfile', metavar='outputfile')
 	args = parser.parse_args()
 
-	code = bf.from_file(args.codefile)
+	cleaned_code = bf.clean_text(args.codefile.read())
+
 	if not args.quiet:
-		print('Brainfuck Code:', code.code)
-	tick_count, scene = code.get_scene(code.code, 20)
-	print(code.get_full_scene())
+		print('Brainfuck Code:', cleaned_code)
 
-
-
-def _main():
-
-	print(ticks, " ticks with ", args.fpt , " frames per tick and ", args.fps, " frames per second ")
-	print((ticks*args.fpt), " frames in " ,(ticks*args.fpt/args.fps), " seconds")
-	if args.dontrender:
-		print(scene_int)
-		quit()
-
-	answer = ''
-	answer = raw_input("Continue to render in " + str(args.threads) + " Threads? yes/no\n")
-
-	if answer != 'yes':
-		quit()
-
-	tmppath = tempfile.mkdtemp();
-	sceneprefix = 'scene_'
-	scenefile = tmppath + os.sep + sceneprefix + '.pov'
-
-	f = open(scenefile, 'w')
-	f.write(scene_amb + scene_int)
-	f.close()
-
-	processes = array.array('I')
-	part = (ticks*args.fpt) / args.threads
-
-		
-
-	for i in range(args.threads):
-		processes.append(os.spawnlp(os.P_NOWAIT, 'povray', '+Lscene', '+Q8', '+A', '-V', '-GD', '-GR', '-GS', '-GA', '-D', '+KI0.0', '+O'+tmppath+os.sep,'+KF' + str(ticks) + '.0', '+KFF' + str(ticks*args.fpt) , '+SF'+str(math.trunc(i*part)+1), '+EF'+str(math.trunc((1+i)*part)), '+H' + args.height, '+W' + args.width, scenefile))
-
-	for i in processes:
-		os.waitpid(i,0)
-	
-	print(ticks, " ticks with ", args.fpt , " frames per tick and ", args.fps, " frames per second ")
-	print((ticks*args.fpt), " frames in " ,(ticks*args.fpt/args.fps), " seconds")
-
-	print("Beginning concatenating to video")
-
-	imgprefix = tmppath + os.sep + sceneprefix
-	
-	sleep(5)	
-
-	#ffmpegpid = os.spawnlpe(os.P_NOWAIT, 'ffmpeg', '-r', args.fps, '-b', args.bitrate, '-i', imgprefix+'%0'+str(len(str(ticks*args.fpt)))+'d.png', imgprefix+'.mp4')
-	#os.waitpid(ffmpegpid,0)
-	
-	ffmpegscript = 'ffmpeg -r '+str(args.fps)+' -i '+imgprefix+'%0'+str(len(str(ticks*args.fpt)))+'d.png '+' -b '+str(args.bitrate)+' '+imgprefix+'.mp4'+'\n'#+'mv '+imgprefix+'.mp4'+' '+args.outputfile
-	print(ffmpegscript)
-	ff = open(imgprefix+'.sh', 'w')
-	ff.write(ffmpegscript)
-	ff.close
-	#print('ffmpeg', '-r', args.fps, '-b', args.bitrate, '-i', imgprefix+'%0'+str(len(str(ticks*args.fpt)))+'d.png', imgprefix+'.mp4')
-	
-	
-	os.spawnlpe(os.P_WAIT, 'sh', imgprefix+'.sh')
-
-	#shutil.move(imgprefix+'.mp4', args.outputfile)
-	
+	import tempfile
+	with tempfile.NamedTemporaryFile(mode='w', suffix='.pov') as scenefile, \
+	tempfile.TemporaryDirectory() as scene_output_directory:
+		imgprefix = 'scene'
+		scenefile.write(bf.get_header(cleaned_code))
+		tickcount = None
+		for tickcount, frame in enumerate(bf.get_scene(cleaned_code)):
+			scenefile.write(frame)
+			scenefile.write('\n')
+		scenefile.write('#end\n')
+		scenefile.flush()
+		tickcount += 1
+		framecount = tickcount*args.fpt
+		image_file_prefix = scene_output_directory + os.sep + imgprefix
+		import subprocess
+		ret_povray = subprocess.call(['povray',
+			'+Lpov.src', # correct include path
+			'-V', #quiet
+			'+KI0.0', '+KF' + str(tickcount) + '.0', '+KFF' + str(framecount),
+			'+Q8', '+A', '-GD', '-GR', '-GS', '-GA',
+			'+O' + image_file_prefix,
+			'+H' + args.height, '+W' + args.width,
+			scenefile.name])
+		if ret_povray == 0:
+			ret_ffmpeg = subprocess.call(['ffmpeg', '-y',
+				'-r', str(args.fps), '-i',
+				image_file_prefix + '%0' + str(len(str(framecount))) + 'd.png',
+				'-qscale', '0',
+				args.outputfile
+				])
 
 if __name__ == '__main__':
     main()
