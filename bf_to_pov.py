@@ -14,6 +14,160 @@ import tempfile
 import shutil
 from time import sleep
 
+class bf(object):
+	bf_commands = '+-.,><[]'
+	max_bf_array_size = 30000
+
+	code = None
+	scene = None
+
+	@staticmethod
+	def clean_text(text):
+		return ''.join(c for c in text if c in bf.bf_commands)
+
+	@staticmethod
+	def from_text(text):
+		return bf(bf.clean_text(text))
+
+	@staticmethod
+	def from_file(fp):
+		code_raw = fp.read()
+		return bf.from_text(code_raw)
+
+	def scene_amb(self):
+		pass
+
+	@staticmethod
+	def get_scene_data(code):
+
+		def is_correct_brackets(code):
+			depth = 0
+			for command in code:
+				if command == '[':
+					depth += 1
+				if command == ']':
+					depth -= 1
+				if depth < 0:
+					return False
+			return depth == 0
+
+		def ensure_size(data, position):
+			while not position < len(data):
+				data.append(0)
+
+		def get(data, position):
+			ensure_size(data, position)
+			return data[position]
+
+		def inc(data, position):
+			ensure_size(data, position)
+			data[position] = min(data[position] + 1, 255)
+
+		def dec(data, position):
+			ensure_size(data, position)
+			data[position] = max(data[position] - 1, 0)
+
+		if not is_correct_brackets(code):
+			raise ValueError('Wrong Bracketing')
+
+		data_pointer = 0
+		code_pointer = 0
+		data = [0]
+
+		yield [0], data_pointer, code_pointer
+
+		while code_pointer < len(code):
+			if code[code_pointer] not in bf.bf_commands:
+				code_pointer += 1
+				continue
+
+			command = code[code_pointer]
+
+			if command == '+':
+				inc(data, data_pointer)
+			elif command == '-':
+				dec(data, data_pointer)
+
+			if command == '>':
+				data_pointer += 1
+
+			if command == '<':
+				data_pointer = max(0, data_pointer - 1)
+
+			if command in '+-><':
+				code_pointer += 1
+
+			if command == '[':
+				if not get(data, data_pointer):
+					depth = 1
+					while depth:
+						code_pointer += 1
+						if code[code_pointer] == '[':
+							depth += 1
+						if code[code_pointer] == ']':
+							depth -= 1
+				else:
+					code_pointer += 1
+
+			if command == ']':
+				if get(data, data_pointer):
+					while depth:
+						code_pointer -= 1
+						if code[code_pointer] == '[':
+							depth -= 1
+						if code[code_pointer] == ']':
+							depth += 1
+				else:
+					code_pointer += 1
+
+			yield data[:], data_pointer, code_pointer
+
+	@staticmethod
+	def get_scene(code):
+
+		def tick_data_to_string(ticknumber, before, after):
+			from itertools import zip_longest
+
+			bf_array_before_tick, bf_pointer_before_tick, codepos_before_tick = before
+			bf_array_after_tick, bf_pointer_after_tick, codepos_after_tick = after
+
+			this_tick = '#range (' + str(ticknumber) + '.0,' + str(ticknumber+1) + '.0)\n'
+
+			this_tick += '#declare intclock = clock-' + str(ticknumber) + '.0;\n'
+			this_tick += '#declare code_from = ' + str(codepos_before_tick) + ';\n'
+			this_tick += '#declare code_to = ' + str(codepos_after_tick) + ';\n'
+			this_tick += '#include "code.pov.inc"\n'
+
+			this_tick += '#declare sl_pos_from = ' + str(bf_pointer_before_tick) + ';\n'
+			this_tick += '#declare sl_pos_to = ' + str(bf_pointer_after_tick) + ';\n'
+			this_tick += '#include "camandlight.pov.inc"\n';
+
+			for boxpos, (val_before, val_after) in enumerate(zip_longest(bf_array_before_tick, bf_array_after_tick, fillvalue=0)):
+				if val_before or val_after:
+					this_tick += '#declare boxpos = ' + str(boxpos) + ';\n'
+					this_tick += '#declare boxvalue_from = ' + str(val_before) + ';\n'
+					this_tick += '#declare boxvalue_to = ' + str(val_after) + ';\n'
+					this_tick += '#include "box.pov.inc"\n'
+			this_tick += '#break\n'
+			return this_tick
+
+		scene_data = bf.get_scene_data(code)
+		before, after = next(scene_data), None
+
+		for count, after in enumerate(scene_data):
+			yield tick_data_to_string(count, before, after)
+			before = after
+
+	@staticmethod
+	def get_header():
+		scene_amb = '#include "scene_def.pov.inc"\n'
+		scene_amb = scene_amb + '#declare code="'+code+'";\n'
+		scene_amb = scene_amb + '#switch (clock)\n'
+		return scene_amb
+
+	def __init__(self, code, maxticks=200):
+		self.code = code
+		self.tick_count, self.scene = bf.get_scene(code, maxticks)
 
 def main():
 	parser = argparse.ArgumentParser(description='Converts brainfuck code to povray scene')
@@ -23,130 +177,21 @@ def main():
 	parser.add_argument('--width', metavar='width', default='640')
 	parser.add_argument('--height', metavar='height', default='480')
 	parser.add_argument('--bitrate', metavar='bitrate', default='4000K')
-	parser.add_argument('--dontrender', action='store_const', const=True)
-	try:
-		cpus = multiprocessing.cpu_count()*2
-	except:
-		cpus = 2
-	parser.add_argument('--threads', metavar='threads', type=int, default=cpus)
-	parser.add_argument('--input', metavar='inputfile', type=argparse.FileType('r'), nargs='?', default=sys.stdin)
-	parser.add_argument('codefile', metavar='codefile', type=file)
-	parser.add_argument('outputfile', metavar='outputfile')
+	parser.add_argument('--quiet', action='store_const', const=True)
+	#parser.add_argument('--input', metavar='inputfile', type=argparse.FileType('r'), nargs='?', default=sys.stdin)
+	parser.add_argument('codefile', metavar='codefile', type=argparse.FileType('r'))
+	parser.add_argument('outputfile', metavar='outputfile', type=argparse.FileType('w'))
 	args = parser.parse_args()
 
-	bf_commands = ['+', '-', '.', ',', '>', '<', '[', ']']
+	code = bf.from_file(args.codefile)
+	if not args.quiet:
+		print('Brainfuck Code:', code.code)
+	tick_count, scene = code.get_scene(code.code, 20)
+	print(code.get_full_scene())
 
-	max_bf_array_size = 1000
-	bf_pointer_before_tick = bf_pointer_after_tick = 0
-	bf_array_before_tick = array.array('b')
-	bf_array_after_tick = array.array('b')
-	for i in range(max_bf_array_size):
-		bf_array_before_tick.append(0)
-		bf_array_after_tick.append(0)
-	loop_depth = 0
-	codepos_before_tick = codepos_after_tick = 0
-	ticks=0
 
-	code = ''
-	code_raw = args.codefile.read()
-	for c in code_raw:
-		if c in bf_commands:
-			code = code + c
-	print(code)
 
-	scene_amb = '#include "scene_def.pov.inc"\n'
-	scene_amb = scene_amb + '#declare code="'+code+'";\n'
-	scene_amb = scene_amb + '#switch (clock)\n'
-	scene_int = ''
-
-	while codepos_after_tick < len(code) and ticks < args.mt:
-		if code[codepos_before_tick] in bf_commands:
-			ticks = ticks + 1
-
-		c  = code[codepos_before_tick]
-
-		# non flow-control-characters
-		if c in bf_commands[:6]:
-			codepos_after_tick = codepos_after_tick + 1
-
-		# +
-		if c in bf_commands[0]:
-			bf_array_after_tick[bf_pointer_before_tick] = bf_array_after_tick[bf_pointer_before_tick] + 1
-
-		# -
-		if c in bf_commands[1]:
-			bf_array_after_tick[bf_pointer_before_tick] = bf_array_after_tick[bf_pointer_before_tick] - 1
-
-		# >
-		if c in bf_commands[4]:
-			bf_pointer_after_tick = bf_pointer_after_tick + 1
-
-		# <
-		if c in bf_commands[5]:
-			bf_pointer_after_tick = bf_pointer_after_tick - 1
-
-		#control flow
-		if c in bf_commands[6]:
-			# [
-			loop_depth = loop_depth + 1
-			if bf_array_after_tick[bf_pointer_before_tick] > 0:
-				codepos_after_tick = codepos_after_tick + 1
-			else:
-				t_loop = loop_depth - 1
-				while (t_loop != loop_depth):
-					codepos_after_tick = codepos_after_tick + 1
-					if code[codepos_after_tick] in bf_commands[6]:
-						t_loop = t_loop + 1
-					if code[codepos_after_tick] in bf_commands[7]:
-						t_loop = t_loop - 1
-				
-
-		if c in bf_commands[7]:
-			# ]
-			loop_depth = loop_depth - 1
-			if bf_array_after_tick[bf_pointer_before_tick] == 0:
-				codepos_after_tick = codepos_after_tick + 1
-			else:
-				t_loop = loop_depth + 1
-				while (t_loop != loop_depth):
-					codepos_after_tick = codepos_after_tick - 1
-					if code[codepos_after_tick] in bf_commands[6]:
-						t_loop = t_loop - 1
-					if code[codepos_after_tick] in bf_commands[7]:
-						t_loop = t_loop + 1
-		#add to scene
-
-		this_tick = ''
-
-		scene_int = scene_int + '#range ('+str(ticks-1)+'.0,'+str(ticks)+'.0)\n';
-		this_tick = this_tick + '#declare intclock = clock-'+str(ticks-1)+'.0;\n';
-		this_tick = this_tick + '#declare code_from = '+str(codepos_before_tick)+';\n';
-		this_tick = this_tick + '#declare code_to = '+str(codepos_after_tick)+';\n';
-		this_tick = this_tick + '#include "code.pov.inc"\n';
-
-		this_tick = this_tick + '#declare sl_pos_from = '+str(bf_pointer_before_tick)+';\n';
-		this_tick = this_tick + '#declare sl_pos_to = '+str(bf_pointer_after_tick)+';\n';
-		this_tick = this_tick + '#include "camandlight.pov.inc"\n';
-		
-		for i in range(max_bf_array_size):
-			if (bf_array_before_tick[i] > 0) or (bf_array_after_tick[i] > 0):
-				this_tick = this_tick + '#declare boxpos = '+str(i)+';\n';
-				this_tick = this_tick + '#declare boxvalue_from = '+str(bf_array_before_tick[i])+';\n';
-				this_tick = this_tick + '#declare boxvalue_to = '+str(bf_array_after_tick[i])+';\n';
-				this_tick = this_tick + '#include "box.pov.inc"\n';
-		scene_int = scene_int + this_tick		
-		scene_int = scene_int + '#break\n';
-		
-		
-		#equalize variables
-		codepos_before_tick = codepos_after_tick
-		bf_pointer_before_tick = bf_pointer_after_tick
-		for i in range(max_bf_array_size):
-			bf_array_before_tick[i] = bf_array_after_tick[i]
-
-	scene_int = scene_int + '#else\n'
-	scene_int = scene_int + this_tick
-	scene_int = scene_int + '#end\n'
+def _main():
 
 	print(ticks, " ticks with ", args.fpt , " frames per tick and ", args.fps, " frames per second ")
 	print((ticks*args.fpt), " frames in " ,(ticks*args.fpt/args.fps), " seconds")
