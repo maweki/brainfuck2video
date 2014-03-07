@@ -33,3 +33,7 @@ You can send me links of your generated videos and I'll put them here.
 ## what's missing?
 At the moment, input and output (, and .) do not work. I want to fix this
 in the near future
+
+## Licence
+The project itself is licenced as MIT Licence. The distributed font VeraMono.ttf
+is licenced under GPLv2.
