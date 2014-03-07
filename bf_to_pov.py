@@ -98,6 +98,7 @@ class bf(object):
 
 			if command == ']':
 				if get(data, data_pointer):
+					depth = 1
 					while depth:
 						code_pointer -= 1
 						if code[code_pointer] == '[':
